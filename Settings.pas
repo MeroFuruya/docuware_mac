@@ -44,9 +44,6 @@ type
     xLocalDatabaseUser: String;
     xLocalDatabasePassword: String;
 
-    // --- Timings ---
-    xTimingsWait: string;
-
     function IniGetAndCreateIfValueNotExists(Section: String; Ident: String; Value: String): String;
   public
     constructor Create();
@@ -84,9 +81,6 @@ type
     property LocalDatabaseListenPort: String read xLocalDatabaseListenPort;
     property LocalDatabaseUser: String read xLocalDatabaseUser;
     property LocalDatabasePassword: String read xLocalDatabasePassword;
-
-    // --- Timings ---
-    property TimingsWait: String read xTimingsWait;
   end;
 
 implementation
@@ -128,9 +122,6 @@ begin
   xLocalDatabaseListenPort := IniGetAndCreateIfValueNotExists('LOCALDATABASE', 'ListenPort', '16000');
   xLocalDatabaseUser := IniGetAndCreateIfValueNotExists('LOCALDATABASE', 'Username', '');
   xLocalDatabasePassword := IniGetAndCreateIfValueNotExists('LOCALDATABASE', 'Password', '');
-
-  // --- Timings ---
-  xTimingsWait := IniGetAndCreateIfValueNotExists('TIMINGS', 'ProcessWaitTime', '300');
 
   // i know it would be better if i would do a check if the file has changed
   // and only then reload it but i dont really care

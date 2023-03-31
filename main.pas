@@ -8,6 +8,8 @@ uses
   System.SysUtils,
   System.Variants,
   System.Classes,
+  System.DateUtils,
+  System.StrUtils,
   Vcl.Graphics,
   Vcl.Controls,
   Vcl.Forms,
@@ -28,7 +30,7 @@ type
     running: boolean;
     funcs: Tfuncs;
   public
-    { Public-Deklarationen }
+    procedure log(msg: string);
   end;
 
 var
@@ -72,6 +74,11 @@ end;
 procedure TForm_main.FormDestroy(Sender: TObject);
 begin
   self.funcs.Free;
+end;
+
+procedure TForm_main.log(msg: string);
+begin
+  self.Memo1.Lines.Add('[' + Now.ToISO8601() + '] - ' + msg + sLineBreak);
 end;
 
 end.
