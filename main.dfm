@@ -11,6 +11,8 @@ object Form_main: TForm_main
   Font.Name = 'Segoe UI'
   Font.Style = []
   OnCloseQuery = FormCloseQuery
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
   TextHeight = 15
   object Button1: TButton
     Left = 0
