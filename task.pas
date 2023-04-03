@@ -2,6 +2,9 @@ unit task;
 
 interface
 
+uses
+  System.SysUtils;
+
 type
   TTask = record
     guid: string;

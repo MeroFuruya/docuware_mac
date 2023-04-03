@@ -82,11 +82,13 @@
         <DCC_RangeChecking>true</DCC_RangeChecking>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
-        <DCC_RemoteDebug>false</DCC_RemoteDebug>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
         <Icon_MainIcon>icon.ico</Icon_MainIcon>
+        <DCC_RunTimeTypeInfo>true</DCC_RunTimeTypeInfo>
+        <DCC_OutputDRCFile>true</DCC_OutputDRCFile>
+        <DCC_MapFile>3</DCC_MapFile>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -106,12 +108,15 @@
             <FormType>dfm</FormType>
             <DesignClass>TDataModule</DesignClass>
         </DCCReference>
+        <DCCReference Include="docuware.pas"/>
+        <DCCReference Include="funcs.pas"/>
         <DCCReference Include="main.pas">
             <Form>Form_main</Form>
             <FormType>dfm</FormType>
         </DCCReference>
         <DCCReference Include="Settings.pas"/>
         <DCCReference Include="StatConst.pas"/>
+        <DCCReference Include="task.pas"/>
         <DCCReference Include="utils.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
@@ -142,6 +147,12 @@
                 <DeployFile LocalName="Win32\Debug\docuware_mac.exe" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win32">
                         <RemoteName>docuware_mac.exe</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="Win32\Debug\docuware_mac.rsm" Configuration="Debug" Class="DebugSymbols">
+                    <Platform Name="Win32">
+                        <RemoteName>docuware_mac.rsm</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>

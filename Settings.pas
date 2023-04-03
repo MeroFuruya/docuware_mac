@@ -85,6 +85,7 @@ type
     function getFieldName(cabinetId: string; id: string): String;
     function getFieldId(cabinetId: string; name: string): String;
     procedure addField(cabinetId: string; name: string; id: string = '');
+    function makeFieldExist(cabinetId: string; name: string): boolean;
   end;
 
 implementation
@@ -151,6 +152,7 @@ var
   ASection: TStrings;
   Ai: Integer;
 begin
+  ASection := TStringList.Create;
   Ini.ReadSection('CABINET_' + cabinetId + '_FIELDS', ASection);
   for Ai := 0 to ASection.Count - 1 do
   begin
@@ -169,10 +171,14 @@ end;
 
 procedure TSettings.addField(cabinetId: string; name: string; id: string = '');
 begin
-  if id = '' then
-    raise Exception.Create('id must not be empty');
-    exit;
   Ini.WriteString('CABINET_' + cabinetId + '_FIELDS', name, id);
+end;
+
+function TSettings.makeFieldExist(cabinetId: string; name: string): boolean;
+begin
+  Result := self.Ini.ReadString('CABINET_' + cabinetId + '_FIELDS', name, '') <> '';
+  if not Result then
+    self.addField(cabinetId, name);
 end;
 
 end.

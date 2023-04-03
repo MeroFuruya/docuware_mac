@@ -19,6 +19,7 @@ type
     FSettings: TSettings;
     FOpenTasks: TList<TTask>;
     FDocuware: TDocuware;
+    function checkFieldMapping(): boolean;
   public
     Constructor Create();
     Destructor Destroy(); override;
@@ -55,6 +56,8 @@ begin
   //init
   self.FSettings := TSettings.Create();
   self.FDocuware := TDocuware.Create(self.FSettings);
+  if not self.checkFieldMapping() then
+    Form_main.log('Field mapping is not complete. Please check the ''settings.ini'' file.');
   if StrToBool(self.FSettings.DatabaseIsRemote) then
   begin
     Fdatabase.OpenRemoteDB(self.FSettings);
@@ -191,6 +194,24 @@ begin
     Form_main.log('Task ' + task.guid + ' failed with error: ' + task.error);
     Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "status"='''+task.error.ToUpper+''' WHERE "guid" LIKE ''' + task.guid + '''';
     Fdatabase.nxQuery1.ExecSQL();
+  end;
+end;
+
+function Tfuncs.checkFieldMapping(): boolean;
+var
+  ACabinet: string;
+  AField: string;
+  fieldExisted: boolean;
+begin
+  Result := True;
+  for ACabinet in self.FDocuware.getAllCabinetIds do
+  begin
+    for AField in self.FDocuware.getAllFieldNames(ACabinet) do
+    begin
+      fieldExisted := self.FSettings.makeFieldExist(ACabinet, AField);
+      if not fieldExisted then
+        Result := False;
+    end;
   end;
 end;
 
