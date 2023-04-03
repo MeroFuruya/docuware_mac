@@ -10,19 +10,10 @@ uses
   Settings,
   StatConst,
   utils,
+  task,
   docuware;
 
 type
-  TTask = record
-    guid: string;
-    command: string;
-    archive: string;
-    archiveId: string;
-    selection: string;
-    error: string;
-    class function Create(guid, command, archive, selection: string): TTask; static;
-  end;
-
   Tfuncs = class
   private
     FSettings: TSettings;
@@ -42,16 +33,6 @@ implementation
 uses
   main;
 
-{ TTask }
-
-class function TTask.Create(guid, command, archive, selection: string): TTask;
-begin
-  Result.guid := guid.ToLower;
-  Result.command := command.ToLower;
-  Result.archive := ExtractFileName(archive).ToLower;
-  Result.selection := selection.ToLower;
-end;
-
 {Tfuncs}
 
 constructor Tfuncs.Create();
@@ -59,7 +40,6 @@ begin
   //create
   inherited;
   self.FOpenTasks := TList<TTask>.Create();
-  self.FDocuware := TDocuware.Create();
 end;
 
 destructor Tfuncs.Destroy();
@@ -74,6 +54,7 @@ procedure Tfuncs.init();
 begin
   //init
   self.FSettings := TSettings.Create();
+  self.FDocuware := TDocuware.Create(self.FSettings);
   if StrToBool(self.FSettings.DatabaseIsRemote) then
   begin
     Fdatabase.OpenRemoteDB(self.FSettings);
@@ -95,6 +76,7 @@ begin
   begin
     Fdatabase.CloseLocalDB();
   end;
+  self.FDocuware.Free;
   self.FSettings.Free;
 end;
 

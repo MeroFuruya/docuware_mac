@@ -29,7 +29,7 @@ type
     function buildUrl(APath: string): string;
     procedure doLogin();
   public
-    constructor Create;
+    constructor Create(Settings: TSettings);
     destructor Destroy; override;
     function select(): TArray<TDocument>;
   end;
@@ -43,7 +43,7 @@ uses
 
 constructor TDocuware.Create(Settings: TSettings);
 begin
-  inherited;
+  inherited Create();
   self.FHttp := THttpClient.Create;
   self.FSettings := Settings;
 end;
@@ -77,7 +77,7 @@ begin
   end
   else if Result.StatusCode <> 200 then
   begin
-    Form_main.log(Format('Request failed with status code %d.', [Result.StatusCode]]));
+    Form_main.log(Format('Request failed with status code %d.', [Result.StatusCode]));
     raise Exception.CreateFmt('Request failed with code %d.', [Result.StatusCode]);
     Exit;
   end;
@@ -93,12 +93,12 @@ begin
   AReq.AddHeader('Content-Type', 'application/xxx-www-form-urlencoded');
   AReq.AddHeader('Accept', 'application/json');
   APayload := TStringStream.Create('username=' + self.FSettings.DocuwareUser + '&password=' + self.FSettings.DocuwarePassword);
-  AReq.ContentStream := APayload;
+  AReq.SourceStream := APayload;
   ARes := self.FHttp.Execute(AReq);
 
   if ARes.StatusCode <> 200 then
   begin
-    Form_main.log(Format('Login failed with status code %d.', [ARes.StatusCode]]));
+    Form_main.log(Format('Login failed with status code %d.', [ARes.StatusCode]));
     raise Exception.CreateFmt('Login failed with code %d.', [ARes.StatusCode]);
     Exit;
   end;
@@ -107,7 +107,7 @@ end;
 function TDocuware.buildUrl(APath: string): string;
 begin
   if not APath.StartsWith('/') then APath := '/' + APath;
-  Result := 'http://' + self.FSettings.DocuwareUrl + '/docuware/platform' + APath;
+  Result := 'http://' + self.FSettings.DocuwareIp + '/docuware/platform' + APath;
 end;
 
 end.
