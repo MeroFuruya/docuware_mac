@@ -81,6 +81,10 @@ type
     property LocalDatabaseListenPort: String read xLocalDatabaseListenPort;
     property LocalDatabaseUser: String read xLocalDatabaseUser;
     property LocalDatabasePassword: String read xLocalDatabasePassword;
+
+    function getFieldName(cabinetId: string; id: string): String;
+    function getFieldId(cabinetId: string; name: string): String;
+    procedure addField(cabinetId: string; name: string; id: string = '');
   end;
 
 implementation
@@ -140,6 +144,35 @@ destructor TSettings.Destroy;
 begin
   Ini.Free;
   inherited Destroy;
+end;
+
+function TSettings.getFieldName(cabinetId: string; id: string): String;
+var
+  ASection: TStrings;
+  Ai: Integer;
+begin
+  Ini.ReadSection('CABINET_' + cabinetId + '_FIELDS', ASection);
+  for Ai := 0 to ASection.Count - 1 do
+  begin
+    if Ini.ReadString('CABINET_' + cabinetId + '_FIELDS', ASection[Ai], '') = id then
+    begin
+      Result := ASection[Ai];
+      Exit;
+    end;
+  end;
+end;
+
+function TSettings.getFieldId(cabinetId: string; name: string): String;
+begin
+  Result := Ini.ReadString('CABINET_' + cabinetId + '_FIELDS', name, '');
+end;
+
+procedure TSettings.addField(cabinetId: string; name: string; id: string = '');
+begin
+  if id = '' then
+    raise Exception.Create('id must not be empty');
+    exit;
+  Ini.WriteString('CABINET_' + cabinetId + '_FIELDS', name, id);
 end;
 
 end.
