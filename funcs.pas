@@ -39,15 +39,14 @@ uses
 constructor Tfuncs.Create();
 begin
   //create
-  inherited;
   self.FOpenTasks := TList<TTask>.Create();
+  inherited;
 end;
 
 destructor Tfuncs.Destroy();
 begin
   //destroy
   self.FOpenTasks.Free();
-  self.FDocuware.Free();
   inherited;
 end;
 
@@ -79,8 +78,17 @@ begin
   begin
     Fdatabase.CloseLocalDB();
   end;
-  self.FDocuware.Free;
-  self.FSettings.Free;
+  // free
+  if self.FDocuware <> nil then
+  begin
+    self.FDocuware.Free;
+    self.FDocuware := nil;
+  end;
+  if self.FSettings <> nil then
+  begin
+    self.FSettings.Free;
+    self.FSettings := nil;
+  end;
 end;
 
 procedure Tfuncs.execute();

@@ -24,10 +24,13 @@ object Form_main: TForm_main
     OnClick = Button1Click
   end
   object Memo1: TMemo
-    Left = 79
+    Left = 87
     Top = 1
     Width = 596
     Height = 461
+    Lines.Strings = (
+      '   ,.lklklkl')
+    ScrollBars = ssBoth
     TabOrder = 1
   end
 end

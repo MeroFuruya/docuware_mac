@@ -79,6 +79,7 @@ end;
 procedure TForm_main.log(msg: string);
 begin
   self.Memo1.Lines.Add('[' + Now.ToISO8601() + '] - ' + msg + sLineBreak);
+  // ShowMessage('[' + Now.ToISO8601() + '] - ' + msg + sLineBreak);  // debug
 end;
 
 end.
