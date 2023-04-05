@@ -3,8 +3,8 @@
 interface
 
 uses
-  VCL.Dialogs,  // @debug
   System.SysUtils,
+  System.DateUtils,
   System.Classes,
   System.Net.HttpClient,
   System.Net.URLClient,
@@ -19,8 +19,6 @@ type
   TField = record
     Name: string;
     Value: string;
-    function DatabaseValue: string;
-    function DocuwareValue: string;
   end;
 
   TDocument = record
@@ -41,32 +39,19 @@ type
     constructor Create(Settings: TSettings);
     destructor Destroy; override;
     function select(task: TTask): TArray<TDocument>;
+    function Update(task: TTask): TDocument;
     function getAllCabinetIds(): TArray<string>;
     function getAllFieldNames(cabinetId: string): TArray<string>;
     property IsError: boolean read FISERROR;
     function translateSelect(cabinetID: string; select: string): TArray<TField>; overload;
     function translateSelect(cabinetID: string; fields: TArray<TField>; FieldIDsOut: boolean = true): TArray<TField>; overload;
+    function translateStoredatetime(fields: TArray<TField>): TArray<TField>;
   end;
 
 implementation
 
 uses
   main;
-
-{ TField }
-
-// patterns i need to convert
-// 1. '/Date(1585814400000)/' -> '2020-04-01T00:00:00.000Z'
-
-function TField.DatabaseValue: string;  // @todo @MeroFuruya
-begin
-  Result := self.Value;
-end;
-
-function TField.DocuwareValue: string;
-begin
-  Result := self.Value;
-end;
 
 { TDocuware }
 
@@ -151,7 +136,7 @@ begin
             AIncludeField := AJsonDocument.GetValue<boolean>('SystemField', false);
 
             if not AIncludeField then
-              AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DocuWareFulltext']) <> -1;
+              AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DWPAGECOUNT', 'DWFLAGS', 'DWOFFSET']) <> -1;
 
             if AIncludeField then
             begin
@@ -196,7 +181,7 @@ begin
               AIncludeField := AJsonDocument.GetValue<boolean>('SystemField', false);
 
               if not AIncludeField then
-                AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DocuWareFulltext']) <> -1;
+                AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DWPAGECOUNT', 'DWFLAGS', 'DWOFFSET']) <> -1;
 
               if AIncludeField then
               begin
@@ -241,6 +226,138 @@ begin
     end;
     AJson.Free;
   end;
+end;
+
+function TDocuware.Update(task: TTask): TDocument;
+var
+  AJsonCabinetInfo: TJsonValue;
+  AExistingFields: TJSONArray;
+  AJsonField: TJSONValue;
+  // fields
+  AFields: TArray<TField>;
+  AField: TField;
+  DirectId: string;
+  AJsonFields: TJSONArray;
+  ANewJsonField: TJSONObject;
+  // request
+  APayload: TJSONObject;
+  APayloadStream: TStringStream;
+  AReq: IHTTPRequest;
+  ARes: IHTTPResponse;
+  // result parsing
+  AJson: TJSONValue;
+  AJsonFields: TJSONArray;
+  AJsonField: TJSONValue;
+begin
+  
+  // get existing fields
+  AReq := self.FHttp.GetRequest(sHTTPMethodGet, self.buildUrl(Format('/FileCabinets/%s', [task.archiveId])));
+  ARes := self.makeRequest(AReq);
+  if ARes.StatusCode = 200 then
+  begin
+    AJsonCabinetInfo := TJSONValue.ParseJSONValue(ARes.ContentAsString);
+    if AJsonCabinetInfo <> nil then
+    begin
+      AExistingFields := AJsonCabinetInfo.GetValue<TJSONArray>('Fields', nil);
+    end;
+  end;
+
+  if AExistingFields = nil then // catch error
+  begin
+    task.status := 'ERROR1';
+    exit;
+  end;
+
+  // create payload
+  APayload := TJSONObject.Create;
+  AJsonFields := TJSONArray.Create;
+  APayload.AddPair('Fields', AJsonFields);
+  // get fields
+  AFields := self.translateSelect(task.archiveId, task.selection);
+  // get cabinet id
+  DirectId := '';
+  for AField in AFields do
+    if (AField.Name.ToLower = 'dwdocid') then
+      DirectId := AField.Value;
+  if DirectId.IsEmpty then
+  begin
+    task.status := 'ERROR2';
+    exit;
+  end;
+  // add fields
+  for AField in AFields do
+  begin
+    // find field in existing fields
+    for AJsonField in AExistingFields do
+    begin
+      if AField.Name = AJsonField.GetValue<string>('Name', '') then
+      begin
+        // check if field is NOT a system field
+        if AJsonField.GetValue<string>('Scope', '') = 'User' then
+        begin
+          // add field to payload
+          ANewJsonField := TJSONObject.Create;
+          ANewJsonField.AddPair('FieldName', AField.Name);
+          ANewJsonField.AddPair('Item', AField.Value);
+          ANewJsonField.AddPair('ItemElementName', AJsonField.GetValue<string>('ItemElementName', ''));
+          AJsonFields.AddElement(ANewJsonField);
+        end;
+      end;
+    end;
+  end;
+
+  if AJsonFields.Count = 0 then
+  begin
+    self.FISERROR := true;
+    exit;
+  end;  // @todo yeah idfk :) but i stopped here
+
+  // Create payload stream
+  APayloadStream := TStringStream.Create(APayload.ToString);
+  // Create Request
+  AReq := self.FHttp.GetRequest(sHTTPMethodPut, self.buildUrl(Format('/FileCabinets/%s/Documents/%s/Fields', [task.archiveId, task.documentId])));
+  AReq.AddHeader('Content-Type', 'application/json');
+  AReq.AddHeader('Accept', 'application/json');
+  AReq.SourceStream := APayloadStream;
+  ARes := self.makeRequest(AReq);
+  if ARes.StatusCode = 200 then
+  begin
+    AJson := TJSONValue.ParseJSONValue(ARes.ContentAsString);
+    if AJson <> nil then
+    begin
+      // parse document
+      Result.Id := AJson.GetValue<string>('Id', '');
+      Result.Name := AJson.GetValue<string>('Title', '');
+      Result.Fields := [];
+      // Document fields
+      if AJson.TryGetValue<TJSONArray>('Fields', AJsonFields) then
+      begin
+        for AJsonDocumentField in AJsonFields do
+        begin
+          // parse field
+          AField.Name := AJsonDocumentField.GetValue<string>('FieldName', '');
+          AField.Value := AJsonDocumentField.GetValue<string>('Item', '');
+
+          // check if field should be included
+          AIncludeField := AJsonDocument.GetValue<boolean>('SystemField', false);
+
+          if not AIncludeField then
+            AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DWPAGECOUNT', 'DWFLAGS', 'DWOFFSET']) <> -1;
+
+          if AIncludeField then
+          begin
+            // add field to document
+            ADoc.Fields := ADoc.Fields + [AField];
+          end;
+        end;
+      end;
+    end;
+    AJson.Free;
+  end;
+  APayloadStream.Free;
+  APayload.Free;
+  
+
 end;
 
 function TDocuware.getAllFieldNames(cabinetId: string): TArray<string>;
@@ -405,6 +522,24 @@ var
   AField: TField;
   ANewField: TField;
   AConvertedFieldIdentifier: string;
+  ANewValue: string;
+
+  function ConvertIfDate(AValue: string): string;
+  var
+    AChar: Char;
+    ANewValue: string;
+  begin
+    if AValue.StartsWith('/Date(') and AValue.EndsWith(')/') then
+    begin
+      for AChar in AValue do
+        if Achar in ['0' .. '9'] then
+          ANewValue := ANewValue + AChar;
+      Result := UnixToDateTime(StrToInt64(ANewValue)).ToISO8601(False);
+    end
+    else
+      Result := AValue;
+  end;
+
 begin
   Result := [];
   self.FISERROR := false;
@@ -412,21 +547,29 @@ begin
   begin
     if FieldIDsOut then
     begin
+      ANewValue := '';
       if AField.Name = 'DWSTOREDATETIME' then
-        AConvertedFieldIdentifier := '243'
+      begin
+        AConvertedFieldIdentifier := '243';
+        ANewValue := ConvertIfDate(AField.Value);
+      end
       else if AField.Name = 'DWDOCID' then
         AConvertedFieldIdentifier := '248'
       else if AField.Name = 'DWDISKNO' then
         AConvertedFieldIdentifier := '249'
       else if AField.Name = 'DocuWareFulltext' then
         AConvertedFieldIdentifier := '69632'
+      else if IndexText(AField.Name, ['DWPAGECOUNT', 'DWFLAGS', 'DWOFFSET']) <> -1 then Continue // ignore these fields
       else
         AConvertedFieldIdentifier := self.FSettings.getFieldID(cabinetID, AField.Name);
     end
     else
     begin
       if AField.Name = '243' then
-        AConvertedFieldIdentifier := 'DWSTOREDATETIME'
+      begin
+        AConvertedFieldIdentifier := 'DWSTOREDATETIME';
+        ANewValue := Format('/Date(%s)/', [DateTimeToUnix(ISO8601ToDate(AField.Value)).ToString]);
+      end
       else if AField.Name = '248' then
         AConvertedFieldIdentifier := 'DWDOCID'
       else if AField.Name = '249' then
@@ -439,12 +582,88 @@ begin
     if AConvertedFieldIdentifier <> '' then
     begin
       ANewField.Name := AConvertedFieldIdentifier;
-      ANewField.Value := AField.Value;
+      if ANewValue <> '' then
+        ANewField.Value := ANewValue
+      else
+        ANewField.Value := AField.Value;
       Result := Result + [ANewField];
       self.FISERROR := self.FISERROR or false;
     end
     else
       self.FISERROR := true;
+  end;
+end;
+
+function TDocuware.translateStoredatetime(fields: TArray<TField>): TArray<TField>;
+var
+  AField: TField;
+  ANewField: TField;
+
+  function dwToDatetime(s: string): TDateTime;
+  var
+    NewStr: string;
+    AChar: char;
+  begin
+    if s.StartsWith('/Date(', true) and s.EndsWith(')/') then
+    begin
+      for AChar in s do
+        if AChar in ['0'..'9'] then
+          NewStr := NewStr + AChar;
+      Result := UnixToDateTime(StrToInt64(NewStr));
+    end
+    else
+      Result := 0;
+  end;
+
+begin
+  Result := [];
+  for AField in fields do
+  begin
+    if AField.Name = 'DWSTOREDATETIME' then
+    begin
+      ANewField.Name := 'SDATE';
+      ANewField.Value := dwToDatetime(AField.Value).Format('dd.mm.yyyy');
+      Result := Result + [ANewField];
+      ANewField.Name := 'STIME';
+      ANewField.Value := dwToDatetime(AField.Value).Format('hh:nn');
+      Result := Result + [ANewField];
+    end
+    else if AField.Name = 'DWDOCID' then
+    begin
+      ANewField.Name := 'DOCID';
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+    end
+    else if AField.Name = 'DWDISKNO' then
+    begin
+      ANewField.Name := 'DISK';
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+    end
+    else if AField.Name = 'DWPAGECOUNT' then
+    begin
+      ANewField.Name := 'PAGES';
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+    end
+    else if AField.Name = 'DWFLAGS' then
+    begin
+      ANewField.Name := 'FLAGS';
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+    end
+    else if AField.Name = 'DWOFFSET' then
+    begin
+      ANewField.Name := 'OFFSET';
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+    end
+    else
+    begin
+      ANewField.Name := AField.Name;
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+    end;
   end;
 end;
 

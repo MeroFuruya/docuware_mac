@@ -22,6 +22,10 @@ type
     FDocuware: TDocuware;
     function checkFieldMapping(): boolean;
     procedure handleSelectTask(var Task: TTask);
+    procedure handleUpdateTask(var Task: TTask);
+    function getResultHeader(documents: TArray<TDocument>): string;
+    function getResultLines(documents: TArray<TDocument>): TArray<string>;
+    function getIndexData(task: TTask; documents: TArray<TDocument>): TArray<string>;
   public
     Constructor Create();
     Destructor Destroy(); override;
@@ -148,7 +152,7 @@ begin
     end
     else if task.command = 'chhdokindex' then
     begin
-
+      self.handleUpdateTask(task);
     end
     else if task.command = 'getobj' then
     begin
@@ -231,16 +235,11 @@ end;
 procedure Tfuncs.handleSelectTask(var Task: TTask);
 var
   ADocuments: TArray<TDocument>;
-  ADocument: TDocument;
-  AField: TField;
   // stuff we need to write to the database:
-  AResultHeadersList: TArray<string>;
-  AResultHeaders: string;
-  AResultHeaderString: string;
   AResultLine: TArray<string>;
-  AConvertedFieldList: TArray<TField>;
   AIndexData: TArray<string>;
   // sql
+  AI: integer;
   ASQLValues: TArray<string>;
 begin
   // stuff we need to write to the database:
@@ -262,36 +261,19 @@ begin
     exit;
   end;
   // build result headers
-  for ADocument in ADocuments do
-    for AField in ADocument.Fields do
-      if IndexText(AField.Name, AResultHeadersList) = -1 then
-        AResultHeadersList := AResultHeadersList + [AField.Name];
-  AResultHeaders := string.Join('|', AResultHeadersList);
   // write the result to the database
-  Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "Resultheader"=''' + AResultHeaders + ''' WHERE "guid" LIKE ''' + task.guid + ''' IGNORE CASE;';
+  Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "Resultheader"=''' + self.getResultHeader(ADocuments) + ''' WHERE "guid" LIKE ''' + task.guid + ''' IGNORE CASE;';
   Fdatabase.nxQuery1.ExecSQL();
-  // iterate through all documents
-  for ADocument in ADocuments do
+
+  // build result lines
+  AResultLine := self.getResultLines(ADocuments);
+  // build index data
+  AIndexData := self.getIndexData(task, ADocuments);
+
+  for AI := 0 to Length(ADocuments) - 1 do
   begin
-    // build result line
-    AResultLine := [];
-    for AResultHeaderString in AResultHeadersList do
-      for AField in ADocument.Fields do
-        if AField.Name = AResultHeaderString then
-          AResultLine := AResultLine + [AField.Value];
-    // build index data
-    AConvertedFieldList := self.FDocuware.translateSelect(task.archiveId, ADocument.Fields, true);
-    ShowMessage(Length(AConvertedFieldList).ToString);
-    if self.FDocuware.IsError then  // docuware error handling
-    begin
-      task.error := 'ERROR2';
-      exit;
-    end;
-    AIndexData := [];
-    for AField in AConvertedFieldList do
-      AIndexData := AIndexData + [AField.Name, AField.Value];
     // add to sql values
-    ASQLValues := ASQLValues + [Format('(''%s'', ''%s'', %d, %s, ''%s'', ''%s'', 0)', [Task.guid, GUIDToString(TGUID.NewGuid), length(ASQLValues), ADocument.Id, string.Join('|', AResultLine), string.Join(',', AIndexData)])];
+    ASQLValues := ASQLValues + [Format('(''%s'', ''%s'', %d, %s, ''%s'', ''%s'', 0)', [Task.guid, GUIDToString(TGUID.NewGuid), AI, ADocuments[AI].Id, AResultLine[AI], AIndexData[AI]])];
   end;
   // write to database
   if Length(ASQLValues) > 0 then
@@ -299,6 +281,74 @@ begin
     Fdatabase.nxQuery1.SQL.Text := 'INSERT INTO "Result" ("ANFGUID", "GUID", "POS", "DOCID", "RESULTLINE", "INDEXDATA", "OBJECTLOADED") VALUES ' + string.Join(',', ASQLValues) + ';';
     Fdatabase.nxQuery1.ExecSQL();
   end;
+end;
+
+function Tfuncs.getResultHeader(documents: TArray<TDocument>): string;
+var
+  AResultHeadersList: TArray<string>;
+  ADocument: TDocument;
+  AField: TField;
+begin
+  Result := '';
+  for ADocument in Documents do
+    for AField in self.FDocuware.translateStoredatetime(ADocument.Fields) do
+      if IndexText(AField.Name, AResultHeadersList) = -1 then
+        AResultHeadersList := AResultHeadersList + [AField.Name];
+  Result := string.Join('|', AResultHeadersList);
+end;
+
+function Tfuncs.getResultLines(documents: TArray<TDocument>): TArray<string>;
+var
+  AResultHeadersList: TArray<string>;
+  ADocument: TDocument;
+  AField: TField;
+  AResultLine: TArray<string>;
+  AResultHeaderString: string;
+begin
+  Result := [];
+  for ADocument in Documents do
+    for AField in self.FDocuware.translateStoredatetime(ADocument.Fields) do
+      if IndexText(AField.Name, AResultHeadersList) = -1 then
+        AResultHeadersList := AResultHeadersList + [AField.Name];
+
+  for ADocument in Documents do
+  begin
+    AResultLine := [];
+    for AResultHeaderString in AResultHeadersList do
+      for AField in self.FDocuware.translateStoredatetime(ADocument.Fields) do
+        if AField.Name = AResultHeaderString then
+          AResultLine := AResultLine + [AField.Value];
+    Result := Result + [string.Join('|', AResultLine)];
+  end;
+end;
+
+function Tfuncs.getIndexData(task: TTask; documents: TArray<TDocument>): TArray<string>;
+var
+  AIndexData: TArray<string>;
+  ADocument: TDocument;
+  AConvertedFieldList: TArray<TField>;
+  AField: TField;
+begin
+  Result := [];
+  for ADocument in Documents do
+  begin
+    // build index data
+    AConvertedFieldList := self.FDocuware.translateSelect(task.archiveId, ADocument.Fields, true);
+    if self.FDocuware.IsError then  // docuware error handling
+    begin
+      Result := [];
+      exit;
+    end;
+    AIndexData := [];
+    for AField in AConvertedFieldList do
+      AIndexData := AIndexData + [AField.Name, AField.Value];
+    Result := Result + [string.Join(',', AIndexData)];
+  end;
+end;
+
+procedure Tfuncs.handleUpdateTask(var Task: TTask);
+begin
+  
 end;
 
 end.
