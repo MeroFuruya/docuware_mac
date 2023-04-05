@@ -1,5 +1,10 @@
 ﻿unit StatConst;
 
+// this file was not weitten by me :)
+// i wouldn't do such things. thats why i dont even use it (except as a reference)
+// it was a guy called "Ulli" who wrote it. he is my educator and hes a great guy. :D
+// @MeroFuruya 20230404_141545
+
 interface
  Type
   TRequest= (reqUndef,

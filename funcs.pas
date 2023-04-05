@@ -3,6 +3,7 @@ unit funcs;
 interface
 
 uses
+  VCL.Dialogs, // @debug
   System.StrUtils,
   System.SysUtils,
   System.Generics.Collections,
@@ -20,6 +21,7 @@ type
     FOpenTasks: TList<TTask>;
     FDocuware: TDocuware;
     function checkFieldMapping(): boolean;
+    procedure handleSelectTask(var Task: TTask);
   public
     Constructor Create();
     Destructor Destroy(); override;
@@ -56,7 +58,7 @@ begin
   self.FSettings := TSettings.Create();
   self.FDocuware := TDocuware.Create(self.FSettings);
   if not self.checkFieldMapping() then
-    Form_main.log('Field mapping is not complete. Please check the ''settings.ini'' file.');
+    Form_main.log('Field/Cabinet mapping is not complete. Please check the ''settings.ini'' file.');
   if StrToBool(self.FSettings.DatabaseIsRemote) then
   begin
     Fdatabase.OpenRemoteDB(self.FSettings);
@@ -142,7 +144,7 @@ begin
     // Categorize Task
     if IndexText(task.command, ['select', 'selectfast', 'selectindex']) <> -1 then
     begin
-
+      self.handleSelectTask(task);
     end
     else if task.command = 'chhdokindex' then
     begin
@@ -200,7 +202,7 @@ begin
   else
   begin
     Form_main.log('Task ' + task.guid + ' failed with error: ' + task.error);
-    Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "status"='''+task.error.ToUpper+''' WHERE "guid" LIKE ''' + task.guid + '''';
+    Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "status"='''+task.error.ToUpper+''' WHERE "guid" LIKE ''' + task.guid + ''' IGNORE CASE';
     Fdatabase.nxQuery1.ExecSQL();
   end;
 end;
@@ -214,12 +216,87 @@ begin
   Result := True;
   for ACabinet in self.FDocuware.getAllCabinetIds do
   begin
+    fieldExisted := self.FSettings.makeCabExist(ACabinet);
+    if not fieldExisted then
+        Result := False;
     for AField in self.FDocuware.getAllFieldNames(ACabinet) do
     begin
       fieldExisted := self.FSettings.makeFieldExist(ACabinet, AField);
       if not fieldExisted then
         Result := False;
     end;
+  end;
+end;
+
+procedure Tfuncs.handleSelectTask(var Task: TTask);
+var
+  ADocuments: TArray<TDocument>;
+  ADocument: TDocument;
+  AField: TField;
+  ADocCount: integer;
+  // stuff we need to write to the database:
+  AResultHeadersList: TArray<string>;
+  AResultHeaders: string;
+  AResultHeaderString: string;
+  AResultLine: string;
+  AConvertedFieldList: TArray<TField>;
+  AIndexData: string;
+begin
+  // stuff we need to write to the database:
+  // - Anforderung
+  //   - Resultheaders (field names, '|' separated)
+  // - Result
+  //   - Pos (document position in result)
+  //   - docid (document id)
+  //   - Resultline (field values, '|' separated)
+  //   - indexdata (fieldname and -value, ',' separated)
+  //   - objectloaded (just a zero)
+
+  // get the result
+  ADocuments := self.FDocuware.select(task);
+  // handle docuware errors
+  if self.FDocuware.IsError then
+  begin
+    task.error := 'ERROR2';
+    exit;
+  end;
+  // build result headers
+  for ADocument in ADocuments do
+    for AField in ADocument.Fields do
+      if IndexText(AField.Name, AResultHeadersList) = -1 then
+        AResultHeadersList := AResultHeadersList + [AField.Name];
+  AResultHeaders := string.Join('|', AResultHeadersList);
+  showMessage(AResultHeaders);  // @debug
+  // write the result to the database
+  Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "Resultheader"=''' + AResultHeaders + ''' WHERE "guid" LIKE ''' + task.guid + ''' IGNORE CASE;';
+  Fdatabase.nxQuery1.ExecSQL();
+  ADocCount := 0;
+  for ADocument in ADocuments do
+  begin
+    // build result line
+    AResultLine := '';
+    for AResultHeaderString in AResultHeadersList do
+      for AField in ADocument.Fields do
+        if AField.Name = AResultHeaderString then
+          AResultLine := AResultLine + AField.Value + '|'
+        else
+          AResultLine := AResultLine + '|';
+    AResultLine := AResultLine.Remove(AResultLine.Length - 1);
+    // build index data
+    AConvertedFieldList := self.FDocuware.translateSelect(task.archiveId, ADocument.Fields, true);
+    if self.FDocuware.IsError then
+    begin
+      task.error := 'ERROR2';
+      exit;
+    end;
+    AIndexData := '';
+    for AField in AConvertedFieldList do
+      AIndexData := AIndexData + AField.Name + ',' + AField.Value + ',';
+    // write to database
+    Fdatabase.nxQuery1.SQL.Text := Format('INSERT INTO "Result" ("ANFGUID", "GUID", "POS", "DOCID", "RESULTLINE", "INDEXDATA", "OBJECTLOADED")'
+    + ' VALUES (''%s'', ''%s'', %d, %s, ''%s'', ''%s'', 0);', [Task.guid, GUIDToString(TGUID.NewGuid), ADocCount, ADocument.Id, AResultLine, AIndexData]);
+    Fdatabase.nxQuery1.ExecSQL();
+    inc(ADocCount);
   end;
 end;
 

@@ -1,8 +1,9 @@
-unit Docuware;
+﻿unit Docuware;
 
 interface
 
 uses
+  VCL.Dialogs,  // @debug
   System.SysUtils,
   System.Classes,
   System.Net.HttpClient,
@@ -30,17 +31,19 @@ type
   private
     FHttp: THttpClient;
     FSettings: TSettings;
+    FISERROR: boolean;
     function makeRequest(AReq: IHTTPRequest): IHttpResponse;
     function buildUrl(APath: string): string;
     procedure doLogin();
-    function translateSelect(cabinetID: string; select: string): TArray<TField>; overload;
-    function translateSelect(fields: TArray<TField>; WithValues: boolean = False; Sep: string = ','): string; overload;
   public
     constructor Create(Settings: TSettings);
     destructor Destroy; override;
     function select(task: TTask): TArray<TDocument>;
     function getAllCabinetIds(): TArray<string>;
     function getAllFieldNames(cabinetId: string): TArray<string>;
+    property IsError: boolean read FISERROR;
+    function translateSelect(cabinetID: string; select: string): TArray<TField>; overload;
+    function translateSelect(cabinetID: string; fields: TArray<TField>; FieldIDsOut: boolean = true): TArray<TField>; overload;
   end;
 
 implementation
@@ -71,6 +74,9 @@ var
   AFields: TArray<TField>;
   AField: TField;
   AUrl: string;
+
+  DirectId: string;
+
   // request
   AReq: IHTTPRequest;
   ARes: IHTTPResponse;
@@ -82,13 +88,67 @@ var
   AJsonDocumentField: TJSONValue;
   // result
   ADoc: TDocument;
+  AIncludeField: boolean;
 begin
-  //@MeroFuruya @todo create field mapper, then continue here :)
   // build url
-  AUrl := '/Documents?q=dialog;;;And;';
-  AFields := self.translateSelect(task.CabinetId, task.Select);
+  AUrl := Format('/FileCabinets/%s/Documents?q=dialog;;;And;', [task.archiveId]);
+  AFields := self.translateSelect(task.archiveId, task.selection);
   for AField in AFields do
-    AUrl := AUrl + Format(';%s:%s', [AField.Name, AField.Value]);
+    if (AField.Name.ToLower = 'dwdocid') then
+      DirectId := AField.Value
+    else
+      AUrl := AUrl + Format(';%s:%s', [AField.Name, AField.Value]);
+  if DirectId <> '' then
+  begin
+    // why does docuware have to be this BAD?
+    // i hate my damn life right now
+    // i dont want to write this shitty code.
+    // i want to write good code.
+    // öasldkfjölaskdfjslg
+    // i hate my life
+    // AAAAAAAAAAAAAAAAAAAHHHHHHHHHHHHHHHH
+    // HEEEELLLPPPPP
+    // i want to die
+    // okay anyways  // @MeroFuruya 20230404_154422
+    AReq := self.FHttp.GetRequest(sHTTPMethodGet, self.buildUrl(Format('/FileCabinets/%s/Documents/%s', [Task.archiveId, DirectId])));
+    ARes := self.makeRequest(AReq);
+    if ARes.StatusCode = 200 then
+    begin
+      AJsonDocument := TJSONValue.ParseJSONValue(ARes.ContentAsString);
+      if AJsonDocument <> nil then
+      begin
+        // parse document
+        ADoc.Id := AJsonDocument.GetValue<string>('Id', '');
+        ADoc.Name := AJsonDocument.GetValue<string>('Title', '');
+        ADoc.Fields := [];
+        // Document fields
+        if AJsonDocument.TryGetValue<TJSONArray>('Fields', AJsonDocumentFields) then
+        begin
+          for AJsonDocumentField in AJsonDocumentFields do
+          begin
+            // parse field
+            AField.Name := AJsonDocumentField.GetValue<string>('FieldName', '');
+            AField.Value := AJsonDocumentField.GetValue<string>('Item', '');
+
+            // check if field should be included
+            AIncludeField := AJsonDocument.GetValue<boolean>('SystemField', false);
+
+            if not AIncludeField then
+              AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DocuWareFulltext']) <> -1;
+
+            if AIncludeField then
+            begin
+              // add field to document
+              ADoc.Fields := ADoc.Fields + [AField];
+            end;
+          end;
+        end;
+        // add document to result
+        Result := Result + [ADoc];
+      end;
+    end;
+    exit;
+  end;
   // make request
   AReq := self.FHttp.GetRequest(sHTTPMethodGet, self.buildUrl(AUrl));
   ARes := self.makeRequest(AReq);
@@ -97,14 +157,38 @@ begin
     AJson := TJSONValue.ParseJSONValue(ARes.ContentAsString);
     if AJson <> nil then
     begin
+      // documents
       if AJson.TryGetValue<TJSONArray>('Items', AJsonDocuments) then
       begin
         for AJsonDocument in AJsonDocuments do
         begin
-          ADoc.Id := AJsonDocument.GetValue<string>('Id', '');  // @iwashere @MeroFuruya
+          // parse document
+          ADoc.Id := AJsonDocument.GetValue<string>('Id', '');
           ADoc.Name := AJsonDocument.GetValue<string>('Title', '');
-          ADoc.Size := AJsonDocument.GetValue<string>('FileSize', '');
-          ADoc.Date := AJsonDocument.GetValue<string>('CreatedAt', '');
+          ADoc.Fields := [];
+          // Document fields
+          if AJsonDocument.TryGetValue<TJSONArray>('Fields', AJsonDocumentFields) then
+          begin
+            for AJsonDocumentField in AJsonDocumentFields do
+            begin
+              // parse field
+              AField.Name := AJsonDocumentField.GetValue<string>('FieldName', '');
+              AField.Value := AJsonDocumentField.GetValue<string>('Item', '');
+
+              // check if field should be included
+              AIncludeField := AJsonDocument.GetValue<boolean>('SystemField', false);
+
+              if not AIncludeField then
+                AIncludeField := IndexText(AField.Name, ['DWSTOREDATETIME', 'DWDOCID', 'DWDISKNO', 'DocuWareFulltext']) <> -1;
+
+              if AIncludeField then
+              begin
+                // add field to document
+                ADoc.Fields := ADoc.Fields + [AField];
+              end;
+            end;
+          end;
+          // add document to result
           Result := Result + [ADoc];
         end;
       end;
@@ -198,8 +282,13 @@ begin
   begin
     Form_main.log(Format('Request failed with status code %d.%sURL: %s', [Result.StatusCode, sLineBreak, AReq.URL.ToString]));
     Form_main.log(Result.ContentAsString);
-    raise Exception.CreateFmt('Request failed with code %d.', [Result.StatusCode]);
+    FISERROR := true;
+    // raise Exception.CreateFmt('Request failed with code %d.', [Result.StatusCode]);
     Exit;
+  end
+  else
+  begin
+    FISERROR := false;
   end;
 end;
 
@@ -213,8 +302,8 @@ begin
   AReq.AddHeader('Content-Type', 'application/x-www-form-urlencoded');
   AReq.AddHeader('Accept', 'application/json');
   APayload := TStringStream.Create(Format(
-    'UserName=%s&Password=%s&Organization=&LicenseType=&RememberMe=false&RedirectToMyselfInCaseOfError=True',
-    [self.FSettings.DocuwareUser, self.FSettings.DocuwarePassword]
+    'UserName=%s&Password=%s&Organization=%s&LicenseType=&RememberMe=false&RedirectToMyselfInCaseOfError=True&HostID=%s',
+    [self.FSettings.DocuwareUser, self.FSettings.DocuwarePassword, self.FSettings.DocuwareOrgId, self.FSettings.DocuwareHostId]
     ));
   AReq.SourceStream := APayload;
   ARes := self.FHttp.Execute(AReq);
@@ -225,8 +314,12 @@ begin
   begin
     Form_main.log(Format('Login failed with status code %d.', [ARes.StatusCode]));
     Form_main.log(ARes.ContentAsString);
-    raise Exception.CreateFmt('Login failed with code %d.', [ARes.StatusCode]);
+    // raise Exception.CreateFmt('Login failed with code %d.', [ARes.StatusCode]);
     Exit;
+  end
+  else
+  begin
+    Form_main.log('Login successful.');
   end;
 end;
 
@@ -263,20 +356,51 @@ begin
   end;
 end;
 
-function TDocuware.translateSelect(fields: TArray<TField>; WithValues: boolean = False; Sep: string = ','): string;
+function TDocuware.translateSelect(cabinetID: string; fields: TArray<TField>; FieldIDsOut: boolean = true): TArray<TField>;
 var
-  AElem: TArray<string>;
   AField: TField;
+  ANewField: TField;
+  AConvertedFieldIdentifier: string;
 begin
-  // @MeroFuruya @todo implement this
+  self.FISERROR := false;
   for AField in fields do
   begin
-    if WithValues then
-      AElem := AElem + [self.FSettings.getFieldId(cabinetId, AField.Name), AField.Value]
+    if FieldIDsOut then
+    begin
+      if AField.Name = 'DWSTOREDATETIME' then
+        AConvertedFieldIdentifier := '243'
+      else if AField.Name = 'DWDOCID' then
+        AConvertedFieldIdentifier := '248'
+      else if AField.Name = 'DWDISKNO' then
+        AConvertedFieldIdentifier := '249'
+      else if AField.Name = 'DocuWareFulltext' then
+        AConvertedFieldIdentifier := '69632'
+      else
+        AConvertedFieldIdentifier := self.FSettings.getFieldID(cabinetID, AField.Name);
+    end
     else
-      AElem := AElem + [self.FSettings.getFieldId(cabinetId, AField.Name)];
+    begin
+      if AField.Name = '243' then
+        AConvertedFieldIdentifier := 'DWSTOREDATETIME'
+      else if AField.Name = '248' then
+        AConvertedFieldIdentifier := 'DWDOCID'
+      else if AField.Name = '249' then
+        AConvertedFieldIdentifier := 'DWDISKNO'
+      else if AField.Name = '69632' then
+        AConvertedFieldIdentifier := 'DocuWareFulltext'
+      else
+        AConvertedFieldIdentifier := self.FSettings.getFieldName(cabinetID, AField.Name);
+    end;
+    if AConvertedFieldIdentifier <> '' then
+    begin
+      ANewField.Name := AConvertedFieldIdentifier;
+      ANewField.Value := AField.Value;
+      Result := Result + [ANewField];
+      self.FISERROR := self.FISERROR or false;
+    end
+    else
+      self.FISERROR := true;
   end;
-  Result := string.Join(Sep, Result);
 end;
 
 end.
