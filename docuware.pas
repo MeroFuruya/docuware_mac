@@ -19,6 +19,8 @@ type
   TField = record
     Name: string;
     Value: string;
+    function DatabaseValue: string;
+    function DocuwareValue: string;
   end;
 
   TDocument = record
@@ -34,7 +36,7 @@ type
     FISERROR: boolean;
     function makeRequest(AReq: IHTTPRequest): IHttpResponse;
     function buildUrl(APath: string): string;
-    procedure doLogin();
+    function doLogin(): boolean;
   public
     constructor Create(Settings: TSettings);
     destructor Destroy; override;
@@ -50,6 +52,21 @@ implementation
 
 uses
   main;
+
+{ TField }
+
+// patterns i need to convert
+// 1. '/Date(1585814400000)/' -> '2020-04-01T00:00:00.000Z'
+
+function TField.DatabaseValue: string;  // @todo @MeroFuruya
+begin
+  Result := self.Value;
+end;
+
+function TField.DocuwareValue: string;
+begin
+  Result := self.Value;
+end;
 
 { TDocuware }
 
@@ -257,31 +274,38 @@ begin
 end;
 
 function TDocuware.makeRequest(AReq: IHTTPRequest): IHttpResponse;
+const
+  MAXTRIES = 10;
 var
   ACount: integer;
 begin
+  ACount := 0;
   AReq.AddHeader('Accept', 'application/json');
   Result := FHttp.Execute(AReq);
   if Result.StatusCode = 401 then
   begin
-    self.doLogin();
-    Result := FHttp.Execute(AReq);
-    // THIS IS A HACK, DOCUWARE IS NOT WORKING PROPERLY :)
-    // sometimes it returns 401 even after login, so we wait 10 ms, witch normally is enougth but just in case -> weird behaviour is weird lmao
-    // yea then we try again
-    // please just mayke the same mistake and dont use docuware
-    ACount := 0;
-    while (Result.StatusCode = 401) and (ACount <= 10) do
+    // sleep(50);
+    if self.doLogin() then
     begin
-      sleep(10);
       Result := FHttp.Execute(AReq);
-      inc(ACount);
+      // THIS IS A HACK, DOCUWARE IS NOT WORKING PROPERLY :)
+      // sometimes it returns 401 even after login, so we wait 10 ms, witch normally is enougth but just in case -> weird behaviour is weird lmao
+      // yea then we try again
+      // please just dont make the same mistake to use docuware   // @MeroFuruya 20230405_100339
+      ACount := 0;
+      while (Result.StatusCode = 401) and (ACount < MAXTRIES) do
+      begin
+        sleep(50);
+        Result := FHttp.Execute(AReq);
+        inc(ACount);
+      end;
+      if acount > 0 then
+        Form_main.log(Format('Request failed with status code %d.%sURL: %s %s%sPayload: %s%sRetried %d of %d times', [Result.StatusCode, sLineBreak, AReq.MethodString, AReq.URL.ToString, sLineBreak, Result.ContentAsString, sLineBreak, ACount, MAXTRIES]));
     end;
   end;
-  if Result.StatusCode <> 200 then
+  if (Result.StatusCode <> 200) and (ACount = 0) then
   begin
-    Form_main.log(Format('Request failed with status code %d.%sURL: %s', [Result.StatusCode, sLineBreak, AReq.URL.ToString]));
-    Form_main.log(Result.ContentAsString);
+    Form_main.log(Format('Request failed with status code %d.%sURL: %s %s%sPayload: %s', [Result.StatusCode, sLineBreak, AReq.MethodString, AReq.URL.ToString, sLineBreak, Result.ContentAsString]));
     FISERROR := true;
     // raise Exception.CreateFmt('Request failed with code %d.', [Result.StatusCode]);
     Exit;
@@ -292,18 +316,37 @@ begin
   end;
 end;
 
-procedure TDocuware.doLogin;
+function TDocuware.doLogin: boolean;
 var
+  AOrgJson: TJSONValue;
+  AOrgName: string;
   AReq: IHTTPRequest;
   ARes: IHTTPResponse;
   APayload: TStringStream;
 begin
+  AOrgName := '';
+  if self.FSettings.DocuwareOrgId <> '' then
+  begin
+    // get organization name
+    AReq := self.FHttp.GetRequest(sHTTPMethodGet, self.buildUrl(Format('/Organizations/%s', [self.FSettings.DocuwareOrgId])));
+    ARes := self.FHttp.Execute(AReq);
+    if ARes.StatusCode = 200 then
+    begin
+      AOrgJson := TJSONValue.ParseJSONValue(ARes.ContentAsString);
+      if AOrgJson <> nil then
+      begin
+        AOrgName := AOrgJson.GetValue<string>('Name', '');
+        AOrgJson.Free;
+      end;
+    end;
+  end;
+
   AReq := self.FHttp.GetRequest(sHTTPMethodPost, self.buildUrl('/Account/Logon'));
   AReq.AddHeader('Content-Type', 'application/x-www-form-urlencoded');
   AReq.AddHeader('Accept', 'application/json');
   APayload := TStringStream.Create(Format(
-    'UserName=%s&Password=%s&Organization=%s&LicenseType=&RememberMe=false&RedirectToMyselfInCaseOfError=True&HostID=%s',
-    [self.FSettings.DocuwareUser, self.FSettings.DocuwarePassword, self.FSettings.DocuwareOrgId, self.FSettings.DocuwareHostId]
+    'UserName=%s&Password=%s&Organization=%s&LicenseType=&RememberMe=false&RedirectToMyselfInCaseOfError=false&HostID=%s',
+    [self.FSettings.DocuwareUser, self.FSettings.DocuwarePassword, AOrgName, self.FSettings.DocuwareHostId]
     ));
   AReq.SourceStream := APayload;
   ARes := self.FHttp.Execute(AReq);
@@ -312,14 +355,15 @@ begin
 
   if ARes.StatusCode <> 200 then
   begin
-    Form_main.log(Format('Login failed with status code %d.', [ARes.StatusCode]));
-    Form_main.log(ARes.ContentAsString);
+    Form_main.log(Format('Login failed with status code %d.%sURL: %s %s%sPayload: %s', [ARes.StatusCode, sLineBreak, AReq.MethodString, AReq.URL.ToString, sLineBreak, ARes.ContentAsString]));
+    Result := false;
     // raise Exception.CreateFmt('Login failed with code %d.', [ARes.StatusCode]);
     Exit;
   end
   else
   begin
     Form_main.log('Login successful.');
+    Result := true;
   end;
 end;
 
@@ -362,6 +406,7 @@ var
   ANewField: TField;
   AConvertedFieldIdentifier: string;
 begin
+  Result := [];
   self.FISERROR := false;
   for AField in fields do
   begin

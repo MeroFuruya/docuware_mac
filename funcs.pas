@@ -233,14 +233,15 @@ var
   ADocuments: TArray<TDocument>;
   ADocument: TDocument;
   AField: TField;
-  ADocCount: integer;
   // stuff we need to write to the database:
   AResultHeadersList: TArray<string>;
   AResultHeaders: string;
   AResultHeaderString: string;
-  AResultLine: string;
+  AResultLine: TArray<string>;
   AConvertedFieldList: TArray<TField>;
-  AIndexData: string;
+  AIndexData: TArray<string>;
+  // sql
+  ASQLValues: TArray<string>;
 begin
   // stuff we need to write to the database:
   // - Anforderung
@@ -266,37 +267,37 @@ begin
       if IndexText(AField.Name, AResultHeadersList) = -1 then
         AResultHeadersList := AResultHeadersList + [AField.Name];
   AResultHeaders := string.Join('|', AResultHeadersList);
-  showMessage(AResultHeaders);  // @debug
   // write the result to the database
   Fdatabase.nxQuery1.SQL.Text := 'UPDATE "Anforderung" SET "Resultheader"=''' + AResultHeaders + ''' WHERE "guid" LIKE ''' + task.guid + ''' IGNORE CASE;';
   Fdatabase.nxQuery1.ExecSQL();
-  ADocCount := 0;
+  // iterate through all documents
   for ADocument in ADocuments do
   begin
     // build result line
-    AResultLine := '';
+    AResultLine := [];
     for AResultHeaderString in AResultHeadersList do
       for AField in ADocument.Fields do
         if AField.Name = AResultHeaderString then
-          AResultLine := AResultLine + AField.Value + '|'
-        else
-          AResultLine := AResultLine + '|';
-    AResultLine := AResultLine.Remove(AResultLine.Length - 1);
+          AResultLine := AResultLine + [AField.Value];
     // build index data
     AConvertedFieldList := self.FDocuware.translateSelect(task.archiveId, ADocument.Fields, true);
-    if self.FDocuware.IsError then
+    ShowMessage(Length(AConvertedFieldList).ToString);
+    if self.FDocuware.IsError then  // docuware error handling
     begin
       task.error := 'ERROR2';
       exit;
     end;
-    AIndexData := '';
+    AIndexData := [];
     for AField in AConvertedFieldList do
-      AIndexData := AIndexData + AField.Name + ',' + AField.Value + ',';
-    // write to database
-    Fdatabase.nxQuery1.SQL.Text := Format('INSERT INTO "Result" ("ANFGUID", "GUID", "POS", "DOCID", "RESULTLINE", "INDEXDATA", "OBJECTLOADED")'
-    + ' VALUES (''%s'', ''%s'', %d, %s, ''%s'', ''%s'', 0);', [Task.guid, GUIDToString(TGUID.NewGuid), ADocCount, ADocument.Id, AResultLine, AIndexData]);
+      AIndexData := AIndexData + [AField.Name, AField.Value];
+    // add to sql values
+    ASQLValues := ASQLValues + [Format('(''%s'', ''%s'', %d, %s, ''%s'', ''%s'', 0)', [Task.guid, GUIDToString(TGUID.NewGuid), length(ASQLValues), ADocument.Id, string.Join('|', AResultLine), string.Join(',', AIndexData)])];
+  end;
+  // write to database
+  if Length(ASQLValues) > 0 then
+  begin
+    Fdatabase.nxQuery1.SQL.Text := 'INSERT INTO "Result" ("ANFGUID", "GUID", "POS", "DOCID", "RESULTLINE", "INDEXDATA", "OBJECTLOADED") VALUES ' + string.Join(',', ASQLValues) + ';';
     Fdatabase.nxQuery1.ExecSQL();
-    inc(ADocCount);
   end;
 end;
 
